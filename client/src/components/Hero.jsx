@@ -18,7 +18,7 @@ const Hero = () => {
     >
       <div style={{color:"white"}} className="max-w-3xl text-center px-6 z-10">
         <h1 className="text-4xl sm:text-6xl font-bold leading-tight">
-          Create amazing content with AI tools
+          Everything you need to create with AI
         </h1>
 
         <p className="mt-6 text-lg sm:text-xl text-gray-300">
