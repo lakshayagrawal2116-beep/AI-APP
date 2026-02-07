@@ -14,6 +14,7 @@ const PAGE_TITLES = {
   "/ai/review-resume": "Resume Review",
   "/ai/community": "Community",
   "/ai/profile": "Profile",
+  "/ai/coding":"Code Reviewer"
 };
 
 const Layout = () => {

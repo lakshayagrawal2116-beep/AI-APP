@@ -9,7 +9,7 @@ const AiTools = () => {
 
   const handleClick = (path) => {
     if (!user) {
-      navigate("/sign-in");
+      navigate("/ai");
     } else {
       navigate(path);
     }
