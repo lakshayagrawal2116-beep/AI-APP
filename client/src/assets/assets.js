@@ -37,8 +37,8 @@ export const AiToolsData = [
         path: '/ai/blog-titles'
     },
     {
-        title: 'Code Reviewer  ',
-        description: 'A perfect AI powered Code Reviewer that ease your coding journey',
+        title: 'Code Explainer  ',
+        description: 'A perfect AI powered Code Explainer that ease your coding journey',
         Icon: CodeSquare,
         bg: { from: '#B153EA', to: '#E549A3' },
         path: '/ai/coding'
