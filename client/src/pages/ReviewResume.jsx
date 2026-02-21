@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import Markdown from "react-markdown";
 import jsPDF from "jspdf";
+import { toPng } from "html-to-image";
 
 
 axios.defaults.baseURL = import.meta.env.VITE_BASE_URL;
@@ -25,26 +26,67 @@ const ReviewResume = () => {
     }
 
     try {
+      setContent("");
       setLoading(true);
 
       const formData = new FormData();
       formData.append("resume", file);
 
-      const { data } = await axios.post(
-        "/api/ai/review-resume",
-        formData,
+      const response = await fetch(
+        axios.defaults.baseURL + "/api/ai/review-resume",
         {
+          method: "POST",
           headers: {
             Authorization: `Bearer ${await getToken()}`,
-            "Content-Type": "multipart/form-data",
           },
+          body: formData,
         }
       );
 
-      if (data.success) {
-        setContent(data.content);
-      } else {
-        toast.error(data.message);
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (!data.success) {
+          toast.error(data.message);
+        }
+        setLoading(false);
+        return;
+      }
+
+      if (!response.body) {
+        toast.error("Streaming not supported");
+        setLoading(false);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let done = false;
+      let streamedText = "";
+      let buffer = "";
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          let parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          for (const part of parts) {
+            if (part.startsWith("data: ")) {
+              const dataStr = part.substring(6);
+              if (dataStr === "[DONE]") {
+                done = true;
+                break;
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                streamedText += parsed.text;
+                setContent(streamedText);
+              } catch (err) { }
+            }
+          }
+        }
       }
     } catch (error) {
       toast.error(error.message);
@@ -53,46 +95,63 @@ const ReviewResume = () => {
     }
   };
 
-  const downloadPDF = () => {
-  if (!content) {
-    toast.error("Nothing to download");
-    return;
-  }
-
-  const doc = new jsPDF("p", "mm", "a4");
-
-  const pageHeight = doc.internal.pageSize.height;
-  const pageWidth = doc.internal.pageSize.width;
-
-  const marginX = 20;
-  let cursorY = 20;
-
-  doc.setFont("Times", "Normal");
-  doc.setFontSize(12);
-
-  // Title
-  doc.setFontSize(16);
-  doc.text("AI Resume Review Report", marginX, cursorY);
-  cursorY += 10;
-
-  doc.setFontSize(12);
-
-  const lines = doc.splitTextToSize(
-    content,
-    pageWidth - marginX * 2
-  );
-
-  lines.forEach((line) => {
-    if (cursorY > pageHeight - 20) {
-      doc.addPage();
-      cursorY = 20;
+  const downloadPDF = async () => {
+    if (!content) {
+      toast.error("Nothing to download");
+      return;
     }
-    doc.text(line, marginX, cursorY);
-    cursorY += 7;
-  });
 
-  doc.save("resume-review.pdf");
-};
+    const element = document.getElementById("pdf-content");
+    if (!element) return;
+
+    toast.success("Generating PDF...", { id: "pdf-gen" });
+
+    try {
+      const originalPadding = element.style.padding;
+      element.style.padding = "20px";
+
+      const dataUrl = await toPng(element, {
+        pixelRatio: 2,
+        backgroundColor: '#111827'
+      });
+
+      element.style.padding = originalPadding;
+
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pdfWidth = pdf.internal.pageSize.width || pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.height || pdf.internal.pageSize.getHeight();
+
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve) => { img.onload = resolve; });
+
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+
+      const ratio = pdfWidth / imgWidth;
+      const scaledImgHeight = imgHeight * ratio;
+
+      let heightLeft = scaledImgHeight;
+      let position = 0;
+
+      pdf.addImage(dataUrl, "PNG", 0, position, pdfWidth, scaledImgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - scaledImgHeight;
+        pdf.addPage();
+        pdf.addImage(dataUrl, "PNG", 0, position, pdfWidth, scaledImgHeight);
+        heightLeft -= pdfHeight;
+      }
+
+      pdf.save("resume-review.pdf");
+      toast.success("PDF Downloaded!", { id: "pdf-gen" });
+    } catch (error) {
+      console.error(error);
+      toast.error(error.message || "Failed to generate", { id: "pdf-gen" });
+    }
+  };
 
   return (
     <div className="h-full flex flex-col lg:flex-row gap-6 p-6 max-w-7xl mx-auto text-gray-200">
@@ -197,22 +256,22 @@ const ReviewResume = () => {
           <div className="mt-4 flex-1 flex flex-col">
 
             <button
-    onClick={downloadPDF}
-    className="
+              onClick={downloadPDF}
+              className="
       self-end mb-3 px-4 py-2 text-xs rounded-lg
       bg-white/10 hover:bg-white/20 transition
       text-white
     "
-  >
-    Download
-  </button>
+            >
+              Download
+            </button>
 
-            
-          <div className="mt-4 flex-1 overflow-y-auto text-sm text-gray-300 pr-2">
-            <div className="reset-tw">
-              <Markdown>{content}</Markdown>
+
+            <div className="mt-4 flex-1 overflow-y-auto text-sm text-gray-300 pr-2">
+              <div id="pdf-content" className="reset-tw">
+                <Markdown>{content}</Markdown>
+              </div>
             </div>
-          </div>
           </div>
         )}
       </div>

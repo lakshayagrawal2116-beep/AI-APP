@@ -5,11 +5,12 @@ import { useAuth } from "@clerk/clerk-react";
 import toast from "react-hot-toast";
 import Markdown from "react-markdown";
 import jsPDF from "jspdf";
+import { toPng } from "html-to-image";
 
 axios.defaults.baseURL = import.meta.env.VITE_BASE_URL;
 
 const Coding = () => {
-  const languages = ["C","C++", "Java", "JavaScript", "Python","Rust","GO","Ruby"];
+  const languages = ["C", "C++", "Java", "JavaScript", "Python", "Rust", "GO", "Ruby"];
 
   const [language, setLanguage] = useState("C++");
   const [code, setCode] = useState("");
@@ -27,22 +28,65 @@ const Coding = () => {
     }
 
     try {
+      setContent("");
       setLoading(true);
 
-      const { data } = await axios.post(
-        "/api/ai/explain-code",
-        { code, language },
+      const response = await fetch(
+        axios.defaults.baseURL + "/api/ai/explain-code",
         {
+          method: "POST",
           headers: {
+            "Content-Type": "application/json",
             Authorization: `Bearer ${await getToken()}`,
           },
+          body: JSON.stringify({ code, language }),
         }
       );
 
-      if (data.success) {
-        setContent(data.content);
-      } else {
-        toast.error(data.message);
+      const contentType = response.headers.get("content-type");
+      if (contentType && contentType.includes("application/json")) {
+        const data = await response.json();
+        if (!data.success) {
+          toast.error(data.message);
+        }
+        setLoading(false);
+        return;
+      }
+
+      if (!response.body) {
+        toast.error("Streaming not supported");
+        setLoading(false);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let done = false;
+      let streamedText = "";
+      let buffer = "";
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          buffer += decoder.decode(value, { stream: true });
+          let parts = buffer.split("\n\n");
+          buffer = parts.pop();
+          for (const part of parts) {
+            if (part.startsWith("data: ")) {
+              const dataStr = part.substring(6);
+              if (dataStr === "[DONE]") {
+                done = true;
+                break;
+              }
+              try {
+                const parsed = JSON.parse(dataStr);
+                streamedText += parsed.text;
+                setContent(streamedText);
+              } catch (err) { }
+            }
+          }
+        }
       }
     } catch (error) {
       toast.error(error.message);
@@ -51,41 +95,62 @@ const Coding = () => {
     }
   };
 
-  const downloadPDF = () => {
+  const downloadPDF = async () => {
     if (!content) {
       toast.error("Nothing to download");
       return;
     }
 
-    const doc = new jsPDF("p", "mm", "a4");
-    const pageHeight = doc.internal.pageSize.height;
-    const pageWidth = doc.internal.pageSize.width;
+    const element = document.getElementById("pdf-content");
+    if (!element) return;
 
-    const marginX = 20;
-    let cursorY = 20;
+    toast.success("Generating PDF...", { id: "pdf-gen" });
 
-    doc.setFont("Times", "Normal");
+    try {
+      const originalPadding = element.style.padding;
+      element.style.padding = "20px";
 
-    doc.setFontSize(16);
-    doc.text(`Code Explanation (${language})`, marginX, cursorY);
-    cursorY += 10;
+      const dataUrl = await toPng(element, {
+        pixelRatio: 2,
+        backgroundColor: '#111827'
+      });
 
-    doc.setFontSize(12);
-    const lines = doc.splitTextToSize(
-      content,
-      pageWidth - marginX * 2
-    );
+      element.style.padding = originalPadding;
 
-    lines.forEach((line) => {
-      if (cursorY > pageHeight - 20) {
-        doc.addPage();
-        cursorY = 20;
+      const pdf = new jsPDF("p", "mm", "a4");
+
+      const pdfWidth = pdf.internal.pageSize.width || pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.height || pdf.internal.pageSize.getHeight();
+
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve) => { img.onload = resolve; });
+
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+
+      const ratio = pdfWidth / imgWidth;
+      const scaledImgHeight = imgHeight * ratio;
+
+      let heightLeft = scaledImgHeight;
+      let position = 0;
+
+      pdf.addImage(dataUrl, "PNG", 0, position, pdfWidth, scaledImgHeight);
+      heightLeft -= pdfHeight;
+
+      while (heightLeft > 0) {
+        position = heightLeft - scaledImgHeight;
+        pdf.addPage();
+        pdf.addImage(dataUrl, "PNG", 0, position, pdfWidth, scaledImgHeight);
+        heightLeft -= pdfHeight;
       }
-      doc.text(line, marginX, cursorY);
-      cursorY += 7;
-    });
 
-    doc.save("Code_Explanation.pdf");
+      pdf.save("Code_Explanation.pdf");
+      toast.success("PDF Downloaded!", { id: "pdf-gen" });
+    } catch (error) {
+      console.error(error);
+      toast.error(error.message || "Failed to generate", { id: "pdf-gen" });
+    }
   };
 
   return (
@@ -122,10 +187,9 @@ const Coding = () => {
                 onClick={() => setLanguage(lang)}
                 className={`
                   py-2 rounded-lg text-xs font-medium transition
-                  ${
-                    language === lang
-                      ? "bg-purple-500/20 text-purple-400 border border-purple-500/40"
-                      : "bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10"
+                  ${language === lang
+                    ? "bg-purple-500/20 text-purple-400 border border-purple-500/40"
+                    : "bg-white/5 text-gray-400 border border-white/10 hover:bg-white/10"
                   }
                 `}
               >
@@ -226,7 +290,7 @@ const Coding = () => {
             </button>
 
             <div className="flex-1 overflow-y-auto text-sm text-gray-300 pr-2">
-              <div className="reset-tw">
+              <div id="pdf-content" className="reset-tw">
                 <Markdown>{content}</Markdown>
               </div>
             </div>
